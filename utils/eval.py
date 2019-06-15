@@ -67,7 +67,7 @@ def gen_mask(model, dataset, ep):
 
                 for bj in range(batch_image.size(0)):
                     tile_x, tile_y = int(batch_x[bj]), int(batch_y[bj])
-                    pred[:, tile_y:tile_y + self.params.ph, tile_x:tile_x + self.params.pw] += pred_src[bj]
+                    pred[:, tile_y:tile_y + dataset.params.ph, tile_x:tile_x + dataset.params.pw] += pred_src[bj]
 
         'save color mask'
         pred = preprocessing.pred_to_mask(pred)
