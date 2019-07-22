@@ -6,10 +6,8 @@ https://iciar2018-challenge.grand-challenge.org/home/
 
 import xml.etree.ElementTree as ET
 import numpy as np
-from scipy.misc import imsave
 import cv2
 import os
-import openslide
 from PIL import Image
 
 
@@ -67,7 +65,7 @@ def readXML(filename):
     return coords, labels, length, area, pixel_spacing
 
 
-def saveImage(image_size, coordinates, labels, sample=4):
+def saveImage(image_size, coordinates, labels, sample):
     # red is 'benign', green is 'in situ' and blue is 'invasive'
     colors = [(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255)]
 
@@ -78,12 +76,13 @@ def saveImage(image_size, coordinates, labels, sample=4):
         img2 = img1[::sample, ::sample, :]
     return img2
 
-def getGT(xmlpath, scan, sample, level):
+
+def getGT(xmlpath, scan, level):
     dims = scan.dimensions
     img_size = (dims[1], dims[0], 3)
 
     coords, labels, length, area, pixel_spacing = readXML(xmlpath)
-    gt = saveImage(img_size, coords, labels, sample=sample)
+    gt = saveImage(img_size, coords, labels, sample=4**level)
 
     gt = Image.fromarray(gt).convert('RGB').resize(scan.level_dimensions[level])
     gt = np.asarray(gt)

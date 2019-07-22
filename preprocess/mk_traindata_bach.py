@@ -1,8 +1,10 @@
+import openslide
 '''
 preprocess train images
 whole slide
+``deprecated`` in favor of centered
+patch extractor
 '''
-import openslide
 import os
 import numpy as np
 from myargs import args
@@ -10,6 +12,8 @@ import glob
 import utils.preprocessing as preprocessing
 from utils.read_xml import getGT
 import utils.filesystem as ufs
+from tqdm import tqdm
+
 
 if __name__ == '__main__':
 
@@ -20,7 +24,9 @@ if __name__ == '__main__':
     metadata_pth = '../{}/gt.npy'.format(args.train_image_pth)
     metadata = ufs.fetch_metadata(metadata_pth)
 
-    for wsipath in sorted(wsipaths):
+    numpixels = args.tile_w*args.tile_h
+
+    for wsipath in tqdm(sorted(wsipaths)):
         'read scan and get metadata'
         scan = openslide.OpenSlide(wsipath)
         filename = os.path.basename(wsipath)
@@ -43,13 +49,21 @@ if __name__ == '__main__':
         gt = getGT(xmlpath, scan, sample=4 ** args.scan_level, level=args.scan_level)
 
         'get low res. nuclei image/foreground mask'
-        mask = preprocessing.find_nuclei(wsi)
+        mask = np.zeros(wsi.size[::-1], dtype=np.uint8)  # preprocessing.find_nuclei(wsi)
 
         'get tiles for masks and wsi'
         for tile_id, (tile_w, tile_g, tile_m) in enumerate(zip(
                 preprocessing.tile_image(wsi, params),
                 preprocessing.tile_image(gt, params),
                 preprocessing.tile_image(mask, params))):
+
+            'skip background patches'
+            m_ = (np.asarray(tile_m[-1]) > 0).astype(np.uint8)
+            g_ = (np.asarray(tile_g[-1]) > 0).astype(np.uint8)
+
+            if np.count_nonzero(m_)/numpixels < 0.5 and np.count_nonzero(g_)/numpixels < 0.01:
+                continue
+
             tilepth_w = '{}/w_{}_{}.png'.format(args.train_image_pth, filename, tile_id)
             tilepth_g = '{}/g_{}_{}.png'.format(args.train_image_pth, filename, tile_id)
             tilepth_m = '{}/m_{}_{}.png'.format(args.train_image_pth, filename, tile_id)
@@ -60,6 +74,7 @@ if __name__ == '__main__':
                 'label': tilepth_g,
                 'mask': tilepth_m,
             }
+
             ' save images '
             tile_w[-1].save('../' + tilepth_w)
             tile_g[-1].save('../' + tilepth_g)

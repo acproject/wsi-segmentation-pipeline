@@ -1,10 +1,8 @@
-
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 from utils import preprocessing
+from myargs import args
 
 
 def lossfn(lossname, params=None):
@@ -15,16 +13,32 @@ def lossfn(lossname, params=None):
         'ratio': 0.5,
         'scale_factor': 1/16,
         'gamma': 2,
-        'alpha': [1/0.6670563,  1/0.05810939, 1/0.04750076, 1/0.22733354]       # see preprocessing.cls_ratios
+        'ignore_index': 0,
+        'alpha': preprocessing.cls_ratios()
     }
 
     params = preprocessing.DotDict(params)
+    args.cls_ratios = params.alpha
+
+    ' cls ratios to weights'
+    params.alpha = torch.Tensor(params.alpha)
+    n_cls = params.alpha.size(0)
+    nonzero_cls = params.alpha.nonzero()
+    params.alpha = params.alpha[nonzero_cls]
+    params.alpha = 1.0/params.alpha
+    params.alpha /= params.alpha.max()
+    _alpha = torch.zeros(n_cls, )
+    _alpha[nonzero_cls] = params.alpha
+    params.alpha = _alpha
 
     losses = {
-        'xent': nn.CrossEntropyLoss(reduction=params.reduction, weight=torch.Tensor(params.alpha)),
+        'xent': nn.CrossEntropyLoss(reduction=params.reduction, weight=params.alpha),
         'focal': FocalLoss2d(gamma=params.gamma, alpha=params.alpha, size_average=params.size_average),
         'ohem': OHEM(ratio=params.ratio, scale_factor=params.scale_factor),
-        'cent': ConditionalEntropyLoss(),
+        'cent': ConditionalEntropyLoss(alpha=params.alpha, reduction=params.reduction),
+        'dice': DiceLoss(alpha=params.alpha, ignore_index=params.ignore_inde),
+        'jaccard': JaccardLoss(),
+        'tversky': TverskyLoss(),
     }
 
     return losses[lossname]
@@ -44,10 +58,8 @@ class FocalLoss2d(nn.Module):
         self.size_average = size_average
         self.alpha = alpha
 
-
         if isinstance(alpha, (float, int)): self.alpha = torch.Tensor([alpha, 1 - alpha])
         if isinstance(alpha, list): self.alpha = torch.Tensor(alpha)
-
 
     def forward(self, input, target):
         if input.dim() > 2:
@@ -108,11 +120,110 @@ class OHEM(torch.nn.NLLLoss):
 class ConditionalEntropyLoss(torch.nn.Module):
     """ conditional entropy + cross entropy combined ."""
 
-    def __init__(self):
+    def __init__(self, alpha, reduction):
         super(ConditionalEntropyLoss, self).__init__()
+        self.alpha = alpha
+        self.reduction = reduction
+        if torch.cuda.is_available():
+            self.alpha = self.alpha.cuda()
 
     def forward(self, x, y):
         b = F.softmax(x, dim=1) * F.log_softmax(x, dim=1)
         b = b.sum(dim=1)
-        return -1.0 * b + F.cross_entropy(x, y, reduction='none')
+        return -1.0 * b + F.cross_entropy(x, y, reduction=self.reduction, weight=self.alpha)
+
+
+class TverskyLoss(torch.nn.Module):
+    'tversky loss (weighted dice)'
+    '''
+    It is noteworthy that in the case of α = β = 0.5 the Tversky index 
+    simplifies to be the same as the Dice coefficient, which is also 
+    equal to the F1 score. With α = β = 1, Equation 2 produces Tanimoto 
+    coefficient, and setting α + β = 1 produces the set of Fβ scores. 
+    Larger βs weigh recall higher than precision (by placing more emphasis
+     on false negatives). We hypothesize that using higher βs in our 
+     generalized loss function in training will lead to higher generalization 
+     and improved performance for imbalanced data; and 
+     effectively helps us shift the emphasis to lower FNs and boost recall
+    '''
+    def __init__(self, alpha=1, beta=1):
+        super(TverskyLoss, self).__init__()
+        self.alpha = alpha  # penalty for false positives
+        self.beta = beta   # penalty for false negatives
+        self.eps = 1e-6
+
+    def forward(self, x, y):
+
+        x = F.softmax(x, 1)
+
+        y_1h = torch.zeros_like(x).cuda()
+        y_1h.scatter_(1, y.unsqueeze(dim=1), 1)
+
+        dims = (0, 2, 3)
+        intersection = torch.sum(x * y_1h, dims) + self.eps
+        fps = torch.sum((x * (1-y_1h)), dims)
+        fns = torch.sum((1-x) * y_1h, dims)
+
+        denominator = intersection + self.alpha * fps + self.beta * fns
+        tversky_loss = intersection / denominator
+
+        return (1-tversky_loss).mean()
+
+
+class DiceLoss(torch.nn.Module):
+    def __init__(self, alpha=None, ignore_index=None):
+        super(DiceLoss, self).__init__()
+        self.eps = 0.0001
+        self.weights = alpha if alpha is not None else torch.ones(args.num_classes)
+        self.ignore_index = ignore_index
+        if torch.cuda.is_available():
+            self.weights = self.weights.cuda()
+
+    def forward(self, output, target):
+
+        output = F.softmax(output, 1)
+        encoded_target = output.detach() * 0
+        if self.ignore_index is not None:
+            mask = target == self.ignore_index
+            target = target.clone()
+            target[mask] = 0
+            encoded_target.scatter_(1, target.unsqueeze(1), 1)
+            mask = mask.unsqueeze(1).expand_as(encoded_target)
+            encoded_target[mask] = 0
+        else:
+            encoded_target.scatter_(1, target.unsqueeze(1), 1)
+
+        intersection = output * encoded_target
+        numerator = 2 * intersection.sum(0).sum(1).sum(1)
+        denominator = output + encoded_target
+
+        if self.ignore_index is not None:
+            denominator[mask] = 0
+        denominator = denominator.sum(0).sum(1).sum(1) + self.eps
+        loss_per_channel = self.weights * (1 - (numerator / denominator))
+
+        return loss_per_channel.sum() / output.size(1)
+
+
+class JaccardLoss(torch.nn.Module):
+    def __init__(self):
+        super(JaccardLoss, self).__init__()
+        self.eps = 1
+
+    def forward(self, x, y):
+
+        x = F.softmax(x, 1)
+
+        y_1h = torch.eye(args.num_classes)[y]
+        y_1h = y_1h.type(y.type())
+        y_1h = y_1h.permute(0, 3, 1, 2).float()
+
+        dims = (0,) + tuple(range(2, y.ndimension()))
+
+        intersection = torch.sum(x * y_1h, dims)
+        cardinality = torch.sum(x, dims) + torch.sum(x, dims)
+        union = cardinality - intersection
+        jacc_loss = (intersection / (union + self.eps))
+
+        return (1 - jacc_loss)
 

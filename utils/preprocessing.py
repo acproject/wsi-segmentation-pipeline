@@ -7,6 +7,8 @@ from myargs import args
 import torch
 from mahotas import bwperim
 import utils.filesystem as ufs
+from scipy.ndimage.morphology import binary_fill_holes
+import gc
 
 
 class DotDict(dict):
@@ -17,6 +19,20 @@ class DotDict(dict):
 
     def __setitem__(self, key, value):
         self.__dict__.update({key: value})
+
+
+def isforeground(arr, thresh=0.25):
+    """
+    isforeground: check if patch
+    has more than thresh% of
+
+    (args)
+    arr: np array
+    thresh: % of foreground required
+    (out)
+    bool
+    """
+    return np.count_nonzero(arr) / arr.size >= thresh
 
 
 def find_nuclei(wsi):
@@ -39,14 +55,16 @@ def find_nuclei(wsi):
 
     ' hsv threshold to remove pink '
     hsv = color.rgb2hsv(np.asarray(wsi)) * 360
-    hsv = (hsv[..., 0] > 240) * (hsv[..., 0] < 300)
+    hsv = (hsv[..., 0] > 270) * (hsv[..., 0] < 300)
 
-    mask = lab*hsv
+    mask = lab+hsv
 
     ' dilate/close whatever '
-    kernel_size = 100
+    mask = binary_fill_holes(mask)
+
+    kernel_size = 10
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
 
     mask = mask.astype(np.uint8)
 
@@ -77,6 +95,12 @@ def tile_image(image, params):
 
     params = DotDict(params)
 
+    if (params.ih - 1 - params.ph) <= 0 or (params.iw - 1 - params.pw) <= 0:
+        xpos = 0
+        ypos = 0
+        yield xpos, ypos, image.crop((xpos, ypos, xpos+params.pw, ypos+params.ph))
+        return
+
     for ypos in range(0, params.ih - 1 - params.ph, params.sh):
         for xpos in range(0, params.iw - 1 - params.pw, params.sw):
             yield xpos, ypos, image.crop((xpos, ypos, xpos+params.pw, ypos+params.ph))
@@ -105,10 +129,11 @@ def pred_to_mask(pred, wsi=None, perim=False):
     threshold probs: if network is inclined to guess
     the same class, increase threshold for that class 
     '''
-    pred = torch.softmax(torch.from_numpy(pred), dim=0).numpy()
+    pred = torch.softmax(torch.from_numpy(pred), dim=0)
     for cj in range(args.num_classes):
         pred[cj, pred[cj, ...] < args.class_probs[cj]] = 0
-    pred = np.argmax(pred, axis=0)
+    pred = torch.argmax(pred, dim=0)
+    pred = pred.numpy()
 
     'save image'
     pred = 255 * (np.eye(args.num_classes)[pred][..., 1:]).astype(np.uint8)
@@ -122,6 +147,8 @@ def pred_to_mask(pred, wsi=None, perim=False):
             pred[..., cj] = cv2.dilate(pred[..., cj], str_elem, iterations=1)
 
         wsi[pred[..., cj] > 0, :] = rgbcolor
+
+    del pred
 
     return wsi
 
@@ -141,23 +168,27 @@ def standard_augmentor(eval=False):
     ])
 
 
-def cls_ratios(pth=args.train_image_pth):
+def cls_ratios(pth=args.train_image_pth, ignore_index=None):
     '''
     given gt.npy,
     calculates class distributions
     of images
     '''
-    metadata_pth = '../{}/gt.npy'.format(pth)
+    metadata_pth = '{}/gt.npy'.format(pth)
     metadata = ufs.fetch_metadata(metadata_pth)
 
     numsamples = np.zeros((args.num_classes, ))
 
     for _, item in metadata.items():
         for _, subitem in item.items():
-            l = Image.open('../'+subitem['label'])
+            l = Image.open(subitem['label'])
             l = np.asarray(l)
             n = np.bincount(l.reshape(-1), minlength=args.num_classes)
 
             numsamples = numsamples + n
 
+    if ignore_index is not None:
+        numsamples[ignore_index] = 0
+
     return numsamples/numsamples.sum()
+

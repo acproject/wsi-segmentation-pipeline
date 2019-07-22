@@ -7,6 +7,9 @@ since we don't have any 'normal'
 (i.e. not labeled) we ignore patches that
 are only normal
 args.raw_train_pth
+``deprecated`` in favor of centered
+patch extractor
+
 '''
 import openslide
 import os
@@ -17,7 +20,6 @@ import utils.preprocessing as preprocessing
 from utils.read_xml_sunnybrook import getGT
 import utils.filesystem as ufs
 
-from PIL import Image
 
 if __name__ == '__main__':
 

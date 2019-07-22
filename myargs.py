@@ -6,24 +6,20 @@ parser = argparse.ArgumentParser()
 # ------------------------ Model related parameters ------------------------ #
 
 
-parser.add_argument('--model_name', default='FPN',
+parser.add_argument('--model_name', default='Unet',
                     help="FPN, PSPNet, Linknet, Unet")
 parser.add_argument('--arch_encoder', default='resnet50',
                     help="architecture of net_encoder")
 parser.add_argument('--num_classes', default=4, type=int,
                     help='# of classes')
-parser.add_argument('--class_probs', default=[0.0, 0., 0., 0.], type=list,
+parser.add_argument('--class_probs', default=[0., 0., 0., 0.], type=list,
                     help='if prediction is below this prob, '
                          'class will not be picked')
 
-parser.add_argument('--loss', default='xent',
-                    help='loss fn to use:'
-                         'cross entropy (xent)'
-                         'conditional entropy+cross entropy (cent)'
-                         'focal loss (focal)'
-                         'online hard example mining (ohem)')
 
-
+parser.add_argument('--optim', default='adam',
+                    help='optimizer to use:'
+                         'adam or sgd')
 parser.add_argument('--lr', default=0.0001, type=float,
                     help='learning rate')
 parser.add_argument('--weight_decay', default=0.0001, type=float,
@@ -38,13 +34,23 @@ parser.add_argument('--num_epoch', default=100, type=int,
 parser.add_argument('--start_epoch', default=1, type=int,
                     help='epoch to start training. useful if continue from a checkpoint')
 
-parser.add_argument('--batch_size', default=4, type=int,
+parser.add_argument('--batch_size', default=2, type=int,
                     help='input batch size')
-parser.add_argument('--workers', default=4, type=int,
+parser.add_argument('--workers', default=10, type=int,
                     help='number of data loading workers')
 parser.add_argument('--gpu_ids', default='0',
                     help='which gpus to use in train/eval')
 
+
+parser.add_argument('--loss', default='dice',
+                    help='loss fn to use:'
+                         'cross entropy (xent)'
+                         'conditional entropy+cross entropy (cent)'
+                         'focal loss (focal)'
+                         'online hard example mining (ohem)'
+                         'dice or intersection over union (dice)'
+                         'jaccard loss (jaccard)'
+                         'tversky loss (tversky)')
 
 # ------------------------ Model related parameters ------------------------ #
 
@@ -57,14 +63,17 @@ parser.add_argument('--model_save_pth',
 parser.add_argument('--continue_train', default=False, type=bool,
                     help='true if continuing from saved model '
                          '(with previous optimizer params, learning rate etc)')
-parser.add_argument('--save_models', default=False, type=bool,
-                    help='save trained models after each epoch')
+parser.add_argument('--save_models', default=1, type=int,
+                    help='save trained models at every n^th epoch '
+                         '(n =0, do not save)')
 
 # ------------------------ Source data paths ------------------------ #
 
 parser.add_argument('--raw_train_pth', default='data/bach',
                     help='wsi svs and xml files')
 parser.add_argument('--raw_val_pth',
+                    default='data/val')
+parser.add_argument('--raw_val1_pth',
                     default='data/val')
 
 # ------------------------ Image paths ------------------------ #
@@ -76,16 +85,19 @@ parser.add_argument('--val_save_pth',
 
 # ------------------------ Tiling parameters ------------------------ #
 
-parser.add_argument('--tile_w', default=768, type=int,
+parser.add_argument('--tile_w', default=1024*2, type=int,
                     help='patch size width')
-parser.add_argument('--tile_h', default=768, type=int,
+parser.add_argument('--tile_h', default=1024*2, type=int,
                     help='patch size height')
-parser.add_argument('--tile_stride_w', default=768//2, type=int,
+parser.add_argument('--tile_stride_w', default=512, type=int,
                     help='image crop size width dx')
-parser.add_argument('--tile_stride_h', default=768//2, type=int,
+parser.add_argument('--tile_stride_h', default=512, type=int,
                     help='image crop size height dy')
-parser.add_argument('--scan_level', default=1, type=int,
+parser.add_argument('--scan_level', default=2, type=int,
                     help='scan pyramid level')
+parser.add_argument('--scan_resize', default=1, type=int,
+                    help='resize the image (given 5x, value of 2 will '
+                         'make it 2.5 etc).')
 
 
 # ------------------------ Image paths ------------------------ #
