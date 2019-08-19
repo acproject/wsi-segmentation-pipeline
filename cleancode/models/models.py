@@ -8,11 +8,11 @@ class Classifier(nn.Module):
     classifier module that is attached
     to the (end of the) encoder.
     '''
-    def __init__(self):
+    def __init__(self, in_features):
         super(Classifier, self).__init__()
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * 3, args.num_classes)
+        self.fc = nn.Linear(in_features, args.num_classes)
 
     def forward(self, x):
 

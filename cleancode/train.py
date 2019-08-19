@@ -26,7 +26,7 @@ def train():
         classes=args.num_classes,
         activation=activation,
     )
-    classifier = Classifier()
+    classifier = Classifier(model.encoder.out_shapes[0])
     optimizer = optimizers.optimfn(args.optim, model.encoder, classifier, model.decoder)
 
     model, optimizer, start_epoch = networktools.continue_train(model, optimizer,
