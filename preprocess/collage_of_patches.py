@@ -71,10 +71,10 @@ if __name__ == '__main__':
             index = index + 1
 
     'use patches to generate collage of patches'
-
-    indices = np.random.permutation(images.shape[0])
-    collage_images = Image.fromarray(gallery(images[indices, ...],  20).astype(np.uint8))
-    collage_gts = gallery(np.expand_dims(gts[indices, ...], -1).astype(np.uint8), 20)[..., 0]
+    num_repeat = 1
+    indices = np.concatenate([np.random.permutation(images.shape[0]) for _ in range(num_repeat)])
+    collage_images = Image.fromarray(gallery(images[indices, ...],  num_repeat*10).astype(np.uint8))
+    collage_gts = gallery(np.expand_dims(gts[indices, ...], -1).astype(np.uint8), num_repeat*10)[..., 0]
     collage_gts = Image.fromarray(collage_gts)
 
     mask = np.zeros((args.tile_h, args.tile_w), dtype=np.uint8)

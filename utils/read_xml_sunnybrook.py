@@ -79,7 +79,7 @@ def mapToClass(label):
         0: (0, 0, 0),  # normals, backgrounds, non-labels, tumor beds, etc.
         1: (255, 0, 0),  # benign, udh
         2: (0, 255, 0),  # DCIS
-        3: (0, 0, 255)  # invasive, i, idc, ilc
+        3: (0, 0, 255),  # invasive, i, idc, ilc
     }
 
     # due to skipping class 0 in lines 115 to 119, the label will never actually be 0, but i keep it here
@@ -100,9 +100,11 @@ def saveImage(image_size, coordinates, labels, sample=8):
         img2 = img[::sample, ::sample, :]
 
     else:
+
         for i, (c, l) in enumerate(zip(coordinates, labels)):
             img1 = fillImage(img, [np.int32(np.stack(c))], color=mapToClass(l))
             img2 = img1[::sample, ::sample, :]
+
     return img2
 
 
@@ -146,18 +148,19 @@ def getGT(xmlpath, scan, level):
     dims = scan.dimensions
 
     img_size = (*dims, 3)
-    img_array = saveImage(img_size, coords, labels, sample=4)
+    img_array = saveImage(img_size, coords, labels, sample=8).astype(np.bool)
 
     for i in range(3):
         # fill holes in polygon images
         img_array[:, :, i] = morph.binary_fill_holes(
-            morph.binary_closing(
+            cv2.morphologyEx(
                 img_array[:, :, i]/255,
-                structure=np.ones((10, 10))
+                cv2.MORPH_CLOSE,
+                kernel=np.ones((10, 10))
             )
         )
 
-    gt = Image.fromarray(img_array*255).convert('RGB').resize(scan.level_dimensions[level])
+    gt = Image.fromarray(img_array.astype(np.uint8)*255).convert('RGB').resize(scan.level_dimensions[level])
 
     gt = np.asarray(gt)
     gt = np.concatenate((np.zeros((gt.shape[0], gt.shape[1], 1)), gt), axis=-1)
@@ -165,4 +168,75 @@ def getGT(xmlpath, scan, level):
 
     return gt
 
+
+# get only the tumor bed
+def getTB(xmlpath, scan, level):
+    coords, labels = readXML_TB(xmlpath)
+    labels = ['benign' for l in labels]
+    dims = scan.dimensions
+
+    img_size = (*dims, 3)
+    img_array = saveImage(img_size, coords, labels, sample=2).astype(np.bool)
+
+    for i in range(3):
+        # fill holes in polygon images
+        img_array[:, :, i] = morph.binary_fill_holes(
+            cv2.morphologyEx(
+                img_array[:, :, i] / 255,
+                cv2.MORPH_CLOSE,
+                kernel=np.ones((10, 10))
+            )
+        )
+
+    img_array = np.max(img_array > 0, -1)
+    gt = Image.fromarray(img_array.astype(np.uint8) * 255).convert('RGB').resize(scan.level_dimensions[level])
+
+    return gt
+
+
+def readXML_TB(filename):
+    tree = ET.parse(filename)
+
+    root = tree.getroot()
+    graphics = root[0][3].findall('graphic')
+
+    labels = []
+    coords = []
+
+    # finds all info from xml file
+    for g in graphics:
+        description = g.get('description').lower().replace(' ', '')
+
+        g_coords = []
+
+        # skips if label is zero, or if the type is not usable
+        if 'tb' not in description:
+            continue
+
+        vertices = g[2].findall('point')
+        for vertex in vertices:
+            g_coords.append(tuple(int(float(i)) for i in vertex.text.split(',')))
+
+        labels += [description]
+        coords += [g_coords]
+
+    return coords, labels
+
+
+# saves the mask image
+def saveImage_TB(image_size, coordinates, labels, sample=2):
+    img = np.zeros((image_size[1], image_size[0], 3), dtype=np.uint8)
+
+    # cases exist where every labelled item in the image is cellularity
+    # meaning that there will be no labels after filtering them out
+    if len(labels) == 0:
+        img2 = img[::sample, ::sample, :]
+
+    else:
+
+        for i, (c, l) in enumerate(zip(coordinates, labels)):
+            img1 = fillImage(img, [np.int32(np.stack(c))], color=mapToClass(l))
+            img2 = img1[::sample, ::sample, :]
+
+    return img2
 

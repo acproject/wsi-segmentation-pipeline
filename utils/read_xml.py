@@ -9,6 +9,7 @@ import numpy as np
 import cv2
 import os
 from PIL import Image
+from skimage.morphology.convex_hull import convex_hull_image as chull
 
 
 def findExtension(directory, extension='.xml'):
@@ -82,7 +83,7 @@ def getGT(xmlpath, scan, level):
     img_size = (dims[1], dims[0], 3)
 
     coords, labels, length, area, pixel_spacing = readXML(xmlpath)
-    gt = saveImage(img_size, coords, labels, sample=4**level)
+    gt = saveImage(img_size, coords, labels, sample=4 ** level)
 
     gt = Image.fromarray(gt).convert('RGB').resize(scan.level_dimensions[level])
     gt = np.asarray(gt)
@@ -90,3 +91,16 @@ def getGT(xmlpath, scan, level):
     gt = np.argmax(gt, axis=-1)
 
     return gt
+
+
+def getTB(gt, scan, level):
+    '''
+    given gt mask
+    with labels
+    1 = benign, 2 = dcis, 3 = inv
+    get tb, which only includes malginant
+    (no benign) cancer's convex hull
+    '''
+    gt[gt == 1] = 0
+    tb = chull((gt > 0).astype(np.uint8))
+    return Image.fromarray(tb.astype(np.uint8) * 255).convert('RGB').resize(scan.level_dimensions[level])

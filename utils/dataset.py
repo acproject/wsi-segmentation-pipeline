@@ -7,15 +7,15 @@ import openslide
 from myargs import args
 import glob
 import os
-from torchvision import transforms
+from tqdm import tqdm
 
 
 class Dataset(data.Dataset):
-    def __init__(self, impth, eval):
+    def __init__(self, impth, eval, duplicate_dataset):
 
         self.eval = eval
         ' augmentation settings '
-        self.image_aug = preprocessing.standard_augmentor()
+        self.image_aug = preprocessing.standard_augmentor(eval)
 
         ' build the dataset '
         self.datalist = []
@@ -24,13 +24,12 @@ class Dataset(data.Dataset):
             self.datalist.append([{
                 'wsi': gt[key][tile_id]['wsi'],
                 'label': gt[key][tile_id]['label'],
-                'mask': gt[key][tile_id]['mask'],
             } for tile_id in gt[key]])
         self.datalist = [item for sublist in self.datalist for item in sublist]
 
         if not self.eval:
             from itertools import chain
-            self.datalist = list(chain(*[[i] * 1 for i in self.datalist]))
+            self.datalist = list(chain(*[[i] * duplicate_dataset for i in self.datalist]))
 
     def __len__(self):
         return len(self.datalist)
@@ -39,55 +38,37 @@ class Dataset(data.Dataset):
 
         'read in image&labels'
         image = Image.open(self.datalist[index]['wsi'])
-        label = Image.open(self.datalist[index]['label'])
-        mask = Image.open(self.datalist[index]['mask'])
 
-        'rescale'
-        if args.scan_resize != 0:
-            x_rs, y_rs = int(image.size[0] / args.scan_resize), int(image.size[1] / args.scan_resize)
-            image = image.resize((x_rs, y_rs))
-            label = label.resize((x_rs, y_rs))
-            mask = mask.resize((x_rs, y_rs))
+        if isinstance(self.datalist[index]['label'], str):
+            label = Image.open(self.datalist[index]['label'])
+        else:
+            label = Image.fromarray(np.zeros((image.size[1], image.size[0]), dtype=np.uint8))
 
-        'random crop'
-        if args.tile_w < image.size[0] or args.tile_h < image.size[1]:
-            i, j, h, w = transforms.RandomCrop.get_params(
-                image, output_size=(args.tile_w, args.tile_h))
-            image = transforms.functional.crop(image, i, j, h, w)
-            label = transforms.functional.crop(label, i, j, h, w)
-            mask = transforms.functional.crop(mask, i, j, h, w)
+        if not self.eval:
+            'rotate image by 90*'
+            degree = int(torch.randint(0, 4, (1, ))) * 90
 
-        'rotate image by 90*'
-        degree = int(torch.randint(0, 4, (1, ))) * 90
-        image = image.rotate(degree)
-        label = label.rotate(degree)
-        mask = mask.rotate(degree)
+            image = image.rotate(degree, expand=True)
+            label = label.rotate(degree, expand=True)
+
+            image = image.resize((args.tile_w, args.tile_h))
+            label = label.resize((args.tile_w, args.tile_h))
 
         label = np.asarray(label)
-        mask = torch.from_numpy(np.asarray(mask)).float()
-
-        '''
-        'idea/to do: instead of using class weights,
-        'can we randomly drop pixels & loss associated with them
-        'proportional to the gt class of that pixel
-        '''
-        'loss mask'
-        '''
-        label_tensor = torch.from_numpy(label)
-        mask = torch.zeros(image.size[::-1]).byte()
-        for ch in range(args.num_classes):
-            m = label_tensor == ch
-            mask[m] = torch.rand(np.count_nonzero(m)) >= args.cls_ratios[ch]
-        '''
 
         image = self.image_aug(image)
-        label = torch.from_numpy(label).long()
-        mask = mask.float()
+        label = torch.from_numpy(label.astype(np.uint8)).long()
 
-        return image, label, mask
+        is_cls = isinstance(self.datalist[index]['label'], int)
+        is_reg = isinstance(self.datalist[index]['label'], float)
+        is_seg = isinstance(self.datalist[index]['label'], str)
+
+        cls_code = self.datalist[index]['label'] if not is_seg else -1
+
+        return image, label, is_cls, is_reg, is_seg, cls_code
 
 
-def GenerateIterator(impth, eval=False):
+def GenerateIterator(impth, eval=False, duplicate_dataset=1):
 
     params = {
         'batch_size': args.batch_size,
@@ -96,7 +77,7 @@ def GenerateIterator(impth, eval=False):
         'pin_memory': True,
     }
 
-    return data.DataLoader(Dataset(impth, eval=eval), **params)
+    return data.DataLoader(Dataset(impth, eval=eval, duplicate_dataset=duplicate_dataset), **params)
 
 
 class Dataset_wsis:
@@ -106,16 +87,24 @@ class Dataset_wsis:
         self.params = preprocessing.DotDict(params)
         self.wsis = {}
 
-        wsipaths = glob.glob('{}/*.svs'.format(svs_pth))
-        for wsipath in sorted(wsipaths):
-            filename = os.path.basename(wsipath)
-            scan = openslide.OpenSlide(wsipath)
+        wsipaths = glob.glob('{}/**/*.svs'.format(svs_pth))
+        with tqdm(enumerate(sorted(wsipaths))) as t:
+            for wj, wsipath in t:
+                t.set_description('Loading wsis.. {:d}/{:d}'.format(1 + wj, len(wsipaths)))
 
-            self.wsis[filename] = {
-                'iterator': GenerateIterator_wsi(wsipath, self.params, bs),
-                'wsipath': wsipath,
-                'scan': scan
-            }
+                filename = os.path.basename(wsipath)
+                scan = openslide.OpenSlide(wsipath)
+                itr = GenerateIterator_wsi(wsipath, self.params, bs)
+
+                msk_pth = '{}/{}.png'.format(args.wsi_mask_pth, filename)
+
+                if itr is not None:
+                    self.wsis[filename] = {
+                        'iterator': itr,
+                        'wsipath': wsipath,
+                        'scan': scan,
+                        'maskpath': msk_pth
+                    }
 
 
 class Dataset_wsi(data.Dataset):
@@ -124,39 +113,57 @@ class Dataset_wsi(data.Dataset):
 
         self.params = params
 
-        'read the wsi scan'
-        self.scan = openslide.OpenSlide(wsipth)
-        self.params.iw, self.params.ih = self.scan.level_dimensions[args.scan_level]
-
-        'gt mask'
-        thmb = self.scan.get_thumbnail(self.scan.level_dimensions[-1])
-        mask = preprocessing.find_nuclei(thmb)
-        mask = Image.fromarray(mask).resize(self.scan.level_dimensions[args.scan_level])
-        mask = np.asarray(mask)
-
-        ' augmentation settings '
-        self.image_aug = preprocessing.standard_augmentor(True)
-
         ' build the dataset '
         self.datalist = []
 
-        for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):
-            for xpos in range(1, self.params.iw - 1 - self.params.pw, self.params.sw):
-                if not preprocessing.isforeground(mask[ypos:ypos+self.params.ph, xpos:xpos+self.params.pw]):
+        'read the wsi scan'
+        filename = os.path.basename(wsipth)
+        self.scan = openslide.OpenSlide(wsipth)
+
+        ' if a slide has less levels than our desired scan level, ignore the slide'
+        if len(self.scan.level_dimensions) - 1 >= args.scan_level:
+
+            self.params.iw, self.params.ih = self.scan.level_dimensions[args.scan_level]
+
+            'gt mask'
+            'find nuclei is slow, hence save masks from preprocessing' \
+            'for later use'
+            msk_pth = '{}/{}.png'.format(args.wsi_mask_pth, filename)
+            if not os.path.exists(msk_pth):
+                thmb = self.scan.read_region((0, 0), self.scan.level_count - 1, self.scan.level_dimensions[-1]).convert('RGB')
+                mask = preprocessing.find_nuclei(thmb)
+                Image.fromarray(mask.astype(np.uint8)).save(msk_pth)
+            else:
+                mask = Image.open(msk_pth).convert('L')
+                mask = np.asarray(mask)
+
+            ' augmentation settings '
+            self.image_aug = preprocessing.standard_augmentor(True)
+
+            'downsample multiplier'
+            m = self.scan.level_downsamples[args.scan_level]/self.scan.level_downsamples[-1]
+            dx, dy = int(self.params.pw*m), int(self.params.ph*m)
+
+            for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):
+                for xpos in range(1, self.params.iw - 1 - self.params.pw, self.params.sw):
+                    yp, xp = int(ypos * m), int(xpos * m)
+                    if not preprocessing.isforeground(mask[yp:yp+dy, xp:xp+dx]):
+                        continue
+                    self.datalist.append((xpos, ypos))
+
+            xpos = self.params.iw - 1 - self.params.pw
+            for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):
+                yp, xp = int(ypos * m), int(xpos * m)
+                if not preprocessing.isforeground(mask[yp:yp + dy, xp:xp + dx]):
                     continue
                 self.datalist.append((xpos, ypos))
 
-        xpos = self.params.iw - 1 - self.params.pw
-        for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):
-            if not preprocessing.isforeground(mask[ypos:ypos + self.params.ph, xpos:xpos + self.params.pw]):
-                continue
-            self.datalist.append((xpos, ypos))
-
-        ypos = self.params.ih - 1 - self.params.ph
-        for xpos in range(1, self.params.iw - 1 - self.params.pw, self.params.sw):
-            if not preprocessing.isforeground(mask[ypos:ypos + self.params.ph, xpos:xpos + self.params.pw]):
-                continue
-            self.datalist.append((xpos, ypos))
+            ypos = self.params.ih - 1 - self.params.ph
+            for xpos in range(1, self.params.iw - 1 - self.params.pw, self.params.sw):
+                yp, xp = int(ypos * m), int(xpos * m)
+                if not preprocessing.isforeground(mask[yp:yp + dy, xp:xp + dx]):
+                    continue
+                self.datalist.append((xpos, ypos))
 
     def __len__(self):
         return len(self.datalist)
@@ -165,18 +172,17 @@ class Dataset_wsi(data.Dataset):
 
         'get top left corner'
         x, y = self.datalist[index]
-        _x, _y = (4**args.scan_level)*x, (4**args.scan_level)*y
+        _x, _y = int(self.scan.level_downsamples[args.scan_level] * x), int(self.scan.level_downsamples[args.scan_level] * y)
 
         'read in image'
         image = self.scan.read_region((_x, _y), args.scan_level, (self.params.pw, self.params.ph)).convert('RGB')
 
         if args.scan_resize != 1:
-            x_rs, y_rs = int(image.size[0] / args.scan_resize), int(image.size[1] / args.scan_resize)
-            image = image.resize((x_rs, y_rs))
+            image = image.resize((args.tile_w, args.tile_h))
 
         image = self.image_aug(image)
 
-        return x, y, image
+        return float(x), float(y), image
 
 
 def GenerateIterator_wsi(wsipth, p, bs):
@@ -188,88 +194,8 @@ def GenerateIterator_wsi(wsipth, p, bs):
         'pin_memory': True,
     }
 
-    return data.DataLoader(Dataset_wsi(wsipth, p), **params)
+    dataset = Dataset_wsi(wsipth, p)
+    if len(dataset) > 0:
+        return data.DataLoader(dataset, **params)
 
-
-class Dataset_wsiwgt(data.Dataset):
-    ' use a wsi image + gt to create the dataset '
-    def __init__(self, wsipth, params):
-
-        self.params = params
-
-        'read the wsi scan'
-        self.scan = openslide.OpenSlide(wsipth)
-        self.params.iw, self.params.ih = self.scan.level_dimensions[args.scan_level]
-
-        'read the gt image'
-        filename = os.path.basename(wsipth)
-        mask_pth = '{}/{}_mask.png'.format(os.path.dirname(wsipth), filename)
-        self.gt = Image.open(mask_pth) if os.path.exists(mask_pth) else \
-            np.zeros(self.scan.level_dimensions[args.scan_level][::-1], dtype=np.uint8)
-        self.gt = np.asarray(self.gt)
-
-        ' augmentation settings '
-        self.image_aug = preprocessing.standard_augmentor(True)
-        ' build the dataset '
-        self.datalist = []
-
-        for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):
-            for xpos in range(1, self.params.iw - 1 - self.params.pw, self.params.sw):
-                self.datalist.append((xpos, ypos))
-
-        xpos = self.params.iw - 1 - self.params.pw
-        for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):
-            self.datalist.append((xpos, ypos))
-
-        ypos = self.params.ih - 1 - self.params.ph
-        for xpos in range(1, self.params.iw - 1 - self.params.pw, self.params.sw):
-            self.datalist.append((xpos, ypos))
-
-    def __len__(self):
-        return len(self.datalist)
-
-    def __getitem__(self, index):
-
-        'get top left corner'
-        x, y = self.datalist[index]
-        _x, _y = (4**args.scan_level)*x, (4**args.scan_level)*y
-
-        'read in image'
-        image = self.scan.read_region((_x, _y), args.scan_level, (self.params.pw, self.params.ph)).convert('RGB')
-
-        image = self.image_aug(image)
-
-        label = self.gt[y:y+self.params.ph, x:x+self.params.pw]
-        label = torch.from_numpy(label).long()
-
-        return x, y, image, label
-
-
-def GenerateIterator_wsiwgt(wsipth, p):
-
-    params = {
-        'batch_size': args.batch_size,
-        'shuffle': True,
-        'num_workers': args.workers,
-        'pin_memory': True,
-    }
-
-    return data.DataLoader(Dataset_wsiwgt(wsipth, p), **params)
-
-
-class Dataset_wsiswgt:
-    ' all validation wsis with gt '
-    def __init__(self, svs_pth, params):
-
-        self.params = preprocessing.DotDict(params)
-        self.wsis = {}
-
-        wsipaths = glob.glob('{}/*.svs'.format(svs_pth))
-        for wsipath in sorted(wsipaths):
-            filename = os.path.basename(wsipath)
-            scan = openslide.OpenSlide(wsipath)
-            self.wsis[filename] = {
-                'iterator': GenerateIterator_wsiwgt(wsipath, self.params),
-                'wsipath': wsipath,
-                'scan': scan
-            }
+    return None

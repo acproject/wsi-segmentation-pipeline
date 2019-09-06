@@ -8,41 +8,84 @@ from myargs import args
 def lossfn(lossname, params=None):
 
     params = params if params is not None else {
-        'reduction': 'none',
-        'size_average': False,
+        'reduction': 'mean',
         'ratio': 0.5,
         'scale_factor': 1/16,
         'gamma': 2,
-        'ignore_index': 0,
-        'alpha': preprocessing.cls_ratios()
+        'ignore_index': -1,
+        'xent_ignore': -1,
+        'alpha': torch.ones(args.num_classes)
     }
 
     params = preprocessing.DotDict(params)
-    args.cls_ratios = params.alpha
 
-    ' cls ratios to weights'
-    params.alpha = torch.Tensor(params.alpha)
-    n_cls = params.alpha.size(0)
-    nonzero_cls = params.alpha.nonzero()
-    params.alpha = params.alpha[nonzero_cls]
-    params.alpha = 1.0/params.alpha
-    params.alpha /= params.alpha.max()
-    _alpha = torch.zeros(n_cls, )
-    _alpha[nonzero_cls] = params.alpha
-    params.alpha = _alpha
 
     losses = {
-        'xent': nn.CrossEntropyLoss(reduction=params.reduction, weight=params.alpha),
-        'focal': FocalLoss2d(gamma=params.gamma, alpha=params.alpha, size_average=params.size_average),
+        'xent': nn.CrossEntropyLoss(reduction=params.reduction, weight=params.alpha, ignore_index=params.xent_ignore),
+        'bce': nn.BCELoss(reduction=params.reduction),
+        'focal': FocalLoss2d(gamma=params.gamma, alpha=params.alpha, reduction=params.reduction),
         'ohem': OHEM(ratio=params.ratio, scale_factor=params.scale_factor),
         'cent': ConditionalEntropyLoss(alpha=params.alpha, reduction=params.reduction),
         'dice': DiceLoss(alpha=params.alpha, ignore_index=params.ignore_inde),
         'jaccard': JaccardLoss(),
         'tversky': TverskyLoss(),
+        'zeroloss': ZeroLoss(),
+        'mse': nn.MSELoss(reduction=params.reduction),
+        'l1': nn.L1Loss(reduction=params.reduction),
+        'logcosh': LogCoshLoss(),
+        'xtanh': XTanhLoss(),
+        'xsigmoid': XSigmoidLoss(),
+        'rmse': RMSELoss(),
     }
-
     return losses[lossname]
 
+
+
+'''
+regression losses
+'''
+
+
+class RMSELoss(torch.nn.Module):
+    def __init__(self):
+        super(RMSELoss, self).__init__()
+        self.criterion = torch.nn.MSELoss()
+
+    def forward(self, x, y):
+        loss = torch.sqrt(self.criterion(x, y))
+        return loss
+
+
+class LogCoshLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, y_t, y_prime_t):
+        ey_t = y_t - y_prime_t
+        return torch.mean(torch.log(torch.cosh(ey_t + 1e-12)))
+
+
+class XTanhLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, y_t, y_prime_t):
+        ey_t = y_t - y_prime_t
+        return torch.mean(ey_t * torch.tanh(ey_t))
+
+
+class XSigmoidLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, y_t, y_prime_t):
+        ey_t = y_t - y_prime_t
+        return torch.mean(2 * ey_t / (1 + torch.exp(-ey_t)) - ey_t)
+
+
+'''
+classification/discrete losses
+'''
 
 ####################################################
 ##### This is focal loss class for multi class #####
@@ -51,11 +94,11 @@ def lossfn(lossname, params=None):
 # I refered https://github.com/c0nn3r/RetinaNet/blob/master/focal_loss.py
 class FocalLoss2d(nn.Module):
 
-    def __init__(self, gamma=2, alpha=None, size_average=True):
+    def __init__(self, gamma=2, alpha=None, reduction=True):
         super(FocalLoss2d, self).__init__()
 
         self.gamma = gamma
-        self.size_average = size_average
+        self.reduction = reduction
         self.alpha = alpha
 
         if isinstance(alpha, (float, int)): self.alpha = torch.Tensor([alpha, 1 - alpha])
@@ -81,7 +124,7 @@ class FocalLoss2d(nn.Module):
 
         loss = -((1-pt)**self.gamma) * logpt
 
-        if self.size_average:
+        if self.reduction == 'mean':
             return loss.mean()
 
         return loss.view(-1, input.size(0))
@@ -124,13 +167,23 @@ class ConditionalEntropyLoss(torch.nn.Module):
         super(ConditionalEntropyLoss, self).__init__()
         self.alpha = alpha
         self.reduction = reduction
-        if torch.cuda.is_available():
-            self.alpha = self.alpha.cuda()
+        self.alpha = self.alpha.cuda()
 
     def forward(self, x, y):
         b = F.softmax(x, dim=1) * F.log_softmax(x, dim=1)
         b = b.sum(dim=1)
-        return -1.0 * b + F.cross_entropy(x, y, reduction=self.reduction, weight=self.alpha)
+        loss = -1.0 * b + F.cross_entropy(x, y, reduction='none', weight=self.alpha)
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        return loss
+
+class ZeroLoss(torch.nn.Module):
+    def __init__(self):
+        super(ZeroLoss, self).__init__()
+
+    def forward(self, x, y):
+        return torch.tensor(0.)
+
 
 
 class TverskyLoss(torch.nn.Module):

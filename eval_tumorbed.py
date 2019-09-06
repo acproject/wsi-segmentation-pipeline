@@ -1,4 +1,3 @@
-import torch
 import utils.dataset as ds
 from myargs import args
 import os
@@ -6,15 +5,15 @@ import utils.eval as val
 import utils.networks as networktools
 import segmentation_models_pytorch as smp
 from models import optimizers
-
+from models.models import Classifier, Regressor
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids
 
 
 def _eval():
 
-    args.val_save_pth = 'data/val/out_val'
-    args.batch_size = 12
+    args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Cellularity_ozan'
+    args.raw_val_pth = '/home/ozan/remoteDir/'
 
     ' model setup '
     def activation(x):
@@ -25,13 +24,15 @@ def _eval():
         classes=args.num_classes,
         activation=activation,
     )
+    model.classifier = Classifier(model.encoder.out_shapes[0], args.num_classes)
+    model.regressor = Regressor(model.encoder.out_shapes[0], 1)
 
-    optimizer = optimizers.optimfn(args.optim, model)  # unused
-    model, optimizer, start_epoch = networktools.continue_train(
+    model, _, _ = networktools.continue_train(
         model,
-        optimizer,
+        optimizers.optimfn(args.optim, model),
         args.eval_model_pth,
-        True)
+        True
+    )
 
     ' datasets '
     validation_params = {
@@ -40,17 +41,11 @@ def _eval():
         'sh': args.tile_stride_h,     # slide step (dy)
         'sw': args.tile_stride_w,     # slide step (dx)
     }
-    iterator_test = ds.Dataset_wsis(args.raw_val1_pth, validation_params)
+    iterator_test = ds.Dataset_wsis(args.raw_val_pth, validation_params)
 
     model = model.cuda()
 
-    'zoom in stage'
-    model.eval()
-    with torch.no_grad():
-        val.predict_wsi(model, iterator_test, 0)
-
-    'save preds'
-    # shutil.make_archive('predictions', 'zip', '{}/0/'.format(args.val_save_pth))
+    val.predict_tumorbed(model, iterator_test, 0)
 
 
 if __name__ == "__main__":
