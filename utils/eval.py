@@ -65,9 +65,9 @@ def predict_wsis(model, dataset, ep):
             mask = np.asarray(mask)
 
             'downsample pred'
-            pred_ = np.zeros((args.num_classes, *scan.level_dimensions[-1][::-1]))
+            pred_ = np.zeros((args.num_classes, *scan.level_dimensions[2][::-1]))
             for ij in range(args.num_classes):
-                pred_[ij, ...] = cv2.resize(pred[ij, ...], scan.level_dimensions[-1])
+                pred_[ij, ...] = cv2.resize(pred[ij, ...], scan.level_dimensions[2])
             pred = pred_
             del pred_
 
@@ -140,8 +140,8 @@ def predict_wsis(model, dataset, ep):
             pred_image = np.expand_dims(mask, -1) * preprocessing.pred_to_mask(pred)
             pred_image[tb] = [255, 255, 255]
             pred_image = Image.fromarray(pred_image)
-            pred_image.resize((dataset.wsis[key]['scan'].level_dimensions[-1][0] // 2,
-                               dataset.wsis[key]['scan'].level_dimensions[-1][1] // 2)). \
+            pred_image.resize((dataset.wsis[key]['scan'].level_dimensions[2][0] // 2,
+                               dataset.wsis[key]['scan'].level_dimensions[2][1] // 2)). \
                 save('{}/{}/{}_{}.png'.format(args.val_save_pth, ep, key, args.tile_stride_w))
 
             del pred
@@ -152,7 +152,7 @@ def predict_wsis(model, dataset, ep):
     model.train()
 
 
-def predict_tumorbed(model, dataset, ep):
+def predict_tumorbed(model, dataset, ep, mode='seg'):
     '''
     given directory svs_path,
     current model goes through each
@@ -173,15 +173,16 @@ def predict_tumorbed(model, dataset, ep):
         ' go through each svs and make a pred. mask'
         with tqdm(enumerate(dataset.wsis)) as t:
             for wj, key in t:
+
                 t.set_description('Generating heatmaps of tumor beds from wsis.. {:d}/{:d}'.format(1 + wj, len(dataset.wsis)))
 
                 scan = dataset.wsis[key]['scan']
 
                 'create prediction template'
-                wsi_yx_dims = scan.level_dimensions[-1][::-1]
+                wsi_yx_dims = scan.level_dimensions[2][::-1]
                 pred = np.zeros((args.num_classes, *wsi_yx_dims), dtype=np.float)
                 'downsample multiplier'
-                m = scan.level_downsamples[args.scan_level]/scan.level_downsamples[-1]
+                m = scan.level_downsamples[args.scan_level]/scan.level_downsamples[2]
                 dx, dy = int(m * dataset.params.pw), int(m * dataset.params.ph)
 
                 'slide over wsi'
@@ -193,7 +194,10 @@ def predict_tumorbed(model, dataset, ep):
                     # preprocessing.display_tensor_images_on_grid(batch_image).save('{}.png'.format(np.random.randint(0, 1000)))
 
                     encoding = model.encoder(batch_image)
-                    pred_src = model.classifier(encoding[0])
+                    if mode == 'cls':
+                        pred_src = model.classifier(encoding[0])
+                    if mode == 'seg':
+                        pred_src = model.decoder(encoding)
 
                     if args.scan_resize != 1:
                         pred_src = F.interpolate(
@@ -203,14 +207,22 @@ def predict_tumorbed(model, dataset, ep):
 
                     pred_src = pred_src.cpu().numpy()
 
+                    while pred.ndim >= pred_src.ndim:
+                        pred_src = np.expand_dims(pred_src, -1)
+
                     for bj in range(batch_image.size(0)):
                         tile_x, tile_y = int(m * batch_x[bj]), int(m * batch_y[bj])
-                        pred[:, tile_y:tile_y + dy, tile_x:tile_x + dx] += np.reshape(pred_src[bj], (args.num_classes, 1, 1))
+                        pred[:, tile_y:tile_y + dy, tile_x:tile_x + dx] += pred_src[bj]
 
                 pred_classes, pred_heatmap = preprocessing.threshold_probs(pred)
 
                 mask = np.array(Image.open(dataset.wsis[key]['maskpath']))
-                pred_heatmap = mask * pred_heatmap[0, ...]
+                if mode == 'cls':
+                    pred_heatmap = pred_heatmap[1, ...]
+                if mode == 'seg':
+                    pred_heatmap = pred_heatmap[2, ...]+pred_heatmap[3, ...]  # (pred_heatmap[2, ...] + pred_heatmap[3, ...])
+
+                pred_heatmap = mask * pred_heatmap
 
                 'save heatmap'
                 pred_heatmap = np.uint8(255 * pred_heatmap)
@@ -247,7 +259,7 @@ def predict_tumorbed(model, dataset, ep):
 
 
                 'save overlay mask'
-                pred_image = scan.get_thumbnail(scan.level_dimensions[-1]).convert('RGB')
+                pred_image = scan.read_region((0, 0), 2, scan.level_dimensions[2]).convert('RGB')
                 pred_image = np.asarray(pred_image).astype(np.uint8)
 
                 pred_image = pred_image*0.75 + 255 * np.repeat(np.expand_dims(pred_heatmap > 255 * 0.99, -1), repeats=3, axis=-1)*0.25

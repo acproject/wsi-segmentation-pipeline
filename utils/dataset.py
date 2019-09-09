@@ -130,7 +130,7 @@ class Dataset_wsi(data.Dataset):
             'for later use'
             msk_pth = '{}/{}.png'.format(args.wsi_mask_pth, filename)
             if not os.path.exists(msk_pth):
-                thmb = self.scan.read_region((0, 0), self.scan.level_count - 1, self.scan.level_dimensions[-1]).convert('RGB')
+                thmb = self.scan.read_region((0, 0), 2, self.scan.level_dimensions[2]).convert('RGB')
                 mask = preprocessing.find_nuclei(thmb)
                 Image.fromarray(mask.astype(np.uint8)).save(msk_pth)
             else:
@@ -141,7 +141,7 @@ class Dataset_wsi(data.Dataset):
             self.image_aug = preprocessing.standard_augmentor(True)
 
             'downsample multiplier'
-            m = self.scan.level_downsamples[args.scan_level]/self.scan.level_downsamples[-1]
+            m = self.scan.level_downsamples[args.scan_level]/self.scan.level_downsamples[2]
             dx, dy = int(self.params.pw*m), int(self.params.ph*m)
 
             for ypos in range(1, self.params.ih - 1 - self.params.ph, self.params.sh):

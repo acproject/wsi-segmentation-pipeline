@@ -57,7 +57,7 @@ class DotDict(dict):
         self.__dict__.update({key: value})
 
 
-def isforeground(arr, thresh=0.99):
+def isforeground(arr, thresh=0.05):
     """
     isforeground: check if patch
     has more than thresh% of
@@ -163,6 +163,7 @@ def threshold_probs(pred):
         pred = torch.from_numpy(pred)
 
     pred = torch.softmax(pred, dim=0)
+
     for cj in range(args.num_classes):
         pred[cj, pred[cj, ...] < args.class_probs[cj]] = 0
 

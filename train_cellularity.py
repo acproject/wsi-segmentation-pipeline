@@ -22,7 +22,7 @@ def train():
     model = eval('smp.'+args.model_name)(
         args.arch_encoder,
         encoder_weights='imagenet',
-        classes=2,
+        classes=4,
         activation=activation,
     )
     model.classifier = Classifier(model.encoder.out_shapes[0], args.num_classes)
@@ -49,7 +49,7 @@ def train():
 
     params = {
         'reduction': 'mean',
-        'alpha': torch.Tensor(cls_weights_seg[:2]),
+        'alpha': torch.Tensor(cls_weights_seg),
         'xent_ignore': -1,
     }
     lossfn_seg = losses.lossfn('xent', params).cuda()
@@ -83,10 +83,6 @@ def train():
 
             loss = 0
 
-            p = torch.tensor((batch_it / len(iterator_train) + epoch) / args.num_epoch)
-            alpha = 2. / (1. + torch.exp(-10 * p)) - 1
-            alpha = alpha.cuda()
-
             if torch.nonzero(is_cls).size(0) > 0:
                 pred_cls = model.classifier(encoding[0][is_cls])
                 loss_cls = lossfn_cls(pred_cls, cls_code[is_cls].long())  # 154/2394*
@@ -101,7 +97,6 @@ def train():
 
             if torch.nonzero(is_seg).size(0) > 0:
                 seg_input = [x[is_seg] for x in encoding]
-                seg_input[0] = ReverseLayerF.apply(seg_input[0], 1)
                 pred_seg = model.decoder(seg_input)
                 loss_seg = lossfn_seg(pred_seg, label[is_seg].long())
                 sum_loss_seg += loss_seg.item()
@@ -113,9 +108,9 @@ def train():
                 optimizer.step()
 
             progress_bar.set_description('ep. {},'
-                                         ' cls loss: {:.3f},'
-                                         ' reg loss: {:.3f},'
-                                         ' seg loss: {:.3f}'.format(
+                                         ' losses; cls: {:.2f},'
+                                         ' reg: {:.2f},'
+                                         ' seg: {:.2f}'.format(
                 epoch,
                 sum_loss_cls/(batch_it+args.epsilon),
                 sum_loss_reg/(batch_it+args.epsilon),
@@ -126,7 +121,7 @@ def train():
         ' test model accuracy '
         if args.validate_model > 0 and epoch % args.validate_model == 0:
             #val.predict_reg(model, iterator_val, epoch)
-            val.predict_cls(model, iterator_val, epoch)
+            #val.predict_cls(model, iterator_val, epoch)
 
             dataset_path = '/home/ozan/Downloads/breastpathq-test/test_patches'
             label_csv_path = '/home/ozan/Downloads/breastpathq-test/Tony_Results.csv'

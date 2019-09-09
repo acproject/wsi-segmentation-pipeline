@@ -43,7 +43,7 @@ for wsipath in tqdm(sorted(wsipaths)):
     gt = Image.fromarray(gt)
     gt.save('../{}/{}_mask_rgb.png'.format(args.raw_val1_pth, filename))
 
-    wsi = scan.get_thumbnail(scan.level_dimensions[-1])
+    wsi = scan.read_region((0, 0), 2, scan.level_dimensions[2])
     mask = preprocessing.find_nuclei(wsi)
     mask = Image.fromarray(mask.astype(np.uint8))
     mask.save('../{}/{}_find_nuclei.png'.format(args.raw_val1_pth, filename))

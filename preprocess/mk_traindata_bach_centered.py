@@ -61,7 +61,6 @@ for _ in range(num_iters):
         xmlpath = '../{}/{}.xml'.format(args.raw_train_pth, filename.split('.svs')[0])
 
         gt = getGT(xmlpath, scan, level=args.scan_level)
-        gt[gt == 1] = 2
 
         n_labels, labels, stats, centers = cv2.connectedComponentsWithStats((gt > 0).astype(np.uint8))
         centers = centers.astype(np.int)

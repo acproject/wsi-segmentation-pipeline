@@ -44,9 +44,6 @@ if __name__ == '__main__':
         cls_name = cls_folder.split('/')[-2]
         cls_code = cls_codes[cls_name]
 
-        #if cls_code == 1:
-        #    continue
-
         image_paths = sorted(glob.glob('{}*.png'.format(cls_folder)))
         for image_path in image_paths:
 

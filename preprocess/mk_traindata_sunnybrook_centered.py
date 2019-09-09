@@ -34,7 +34,7 @@ def ispow2(x):
 
 args.raw_train_pth = 'data/sunnybrook/WSI'
 
-ufs.make_folder('../' + args.train_image_pth, False)
+ufs.make_folder('../' + args.train_image_pth, True)
 wsipaths = glob.glob('../{}/*.svs'.format(args.raw_train_pth))
 
 ' check if metadata gt.npy already exists to append to it '
@@ -62,7 +62,6 @@ for _ in range(num_iters):
         xmlpath = '../{}/{}.xml'.format(args.raw_train_pth, filename.split('.svs')[0])
 
         gt = getGT(xmlpath, scan, level=args.scan_level)
-        gt[gt == 1] = 2
 
         n_labels, labels, stats, centers = cv2.connectedComponentsWithStats((gt > 0).astype(np.uint8))
         centers = centers.astype(np.int)

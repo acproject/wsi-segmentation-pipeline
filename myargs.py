@@ -10,7 +10,7 @@ parser.add_argument('--model_name', default='Unet',
                     help="FPN, PSPNet, Linknet, Unet")
 parser.add_argument('--arch_encoder', default='resnet18',
                     help="architecture of net_encoder")
-parser.add_argument('--num_classes', default=2, type=int,
+parser.add_argument('--num_classes', default=4, type=int,
                     help='# of classes')
 parser.add_argument('--class_probs', default=[0., 0., 0., 0.], type=list,
                     help='if prediction is below this prob, '
@@ -62,7 +62,7 @@ parser.add_argument('--loss', default='mse',
 # ------------------------ Model related parameters ------------------------ #
 
 parser.add_argument('--eval_model_pth',
-                    default='data/models/model_resnet18_320.pt')
+                    default='data/models/model_resnet18_10.pt')
 parser.add_argument('--train_model_pth',
                     default='data/models/*.pt')
 parser.add_argument('--model_save_pth',
@@ -110,7 +110,7 @@ parser.add_argument('--tile_stride_w', default=128, type=int,
                     help='image crop size width dx')
 parser.add_argument('--tile_stride_h', default=128, type=int,
                     help='image crop size height dy')
-parser.add_argument('--scan_level', default=0, type=int,
+parser.add_argument('--scan_level', default=2, type=int,
                     help='scan pyramid level')
 parser.add_argument('--scan_resize', default=1, type=int,
                     help='resize the image (given 5x, value of 2 will '

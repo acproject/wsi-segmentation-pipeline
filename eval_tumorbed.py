@@ -12,7 +12,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids
 
 def _eval():
 
-    args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Cellularity_ozan'
+    args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Lowres_segmentation_ozan'
     args.raw_val_pth = '/home/ozan/remoteDir/'
 
     ' model setup '
@@ -36,8 +36,8 @@ def _eval():
 
     ' datasets '
     validation_params = {
-        'ph': args.tile_h,  # patch height (y)
-        'pw': args.tile_w,  # patch width (x)
+        'ph': args.tile_h * args.scan_resize,  # patch height (y)
+        'pw': args.tile_w * args.scan_resize,  # patch width (x)
         'sh': args.tile_stride_h,     # slide step (dy)
         'sw': args.tile_stride_w,     # slide step (dx)
     }
