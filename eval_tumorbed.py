@@ -12,7 +12,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids
 
 def _eval():
 
-    args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Lowres_segmentation_ozan'
+    args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Ynet_segmentation_ozan'
     args.raw_val_pth = '/home/ozan/remoteDir/'
 
     ' model setup '

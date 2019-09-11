@@ -62,7 +62,7 @@ parser.add_argument('--loss', default='mse',
 # ------------------------ Model related parameters ------------------------ #
 
 parser.add_argument('--eval_model_pth',
-                    default='data/models/model_resnet18_10.pt')
+                    default='data/models/model_resnet18_26.pt')
 parser.add_argument('--train_model_pth',
                     default='data/models/*.pt')
 parser.add_argument('--model_save_pth',

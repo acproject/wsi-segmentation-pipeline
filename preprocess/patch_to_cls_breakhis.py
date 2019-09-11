@@ -23,8 +23,8 @@ if __name__ == '__main__':
     for root, dirs, files in tqdm(os.walk(args.patch_folder, topdown=False)):
         for name in files:
 
-            if '.png' not in name:# \
-                    #or '/40X' not in root:
+            if '.png' not in name \
+                    or '/40X' not in root:
                 continue
 
             image_path = os.path.join(root, name)
