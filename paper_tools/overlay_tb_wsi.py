@@ -10,13 +10,31 @@ from mahotas import bwperim
 import numpy as np
 from skimage.morphology.convex_hull import convex_hull_image as chull
 import openslide
+from myargs import args
+import os
+import glob
+
+image_id = 101323
+image_id = str(image_id)
+
+args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Cellularity_ozan'
+args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Ynet_segmentation_ozan'
+args.val_save_pth = '/home/ozan/remoteDir/Tumor Bed Detection Results/Lowres_segmentation_ozan'
+args.raw_val_pth = '/home/ozan/remoteDir/'
 
 
-scan = openslide.OpenSlide('/home/ozan/remoteDir/Case 8/101323.svs')
+for root, dirs, names in os.walk(args.raw_val_pth):
+    if '{}.svs'.format(image_id) in names:
+        svs_path = os.path.join(root, '{}.svs'.format(image_id))
+        break
+
+scan = openslide.OpenSlide(svs_path)
 wsi = scan.read_region((0, 0), 2, scan.level_dimensions[2]).convert('RGB')
 
+heatmap_path = glob.glob('{}/**/*{}*heatmap*'.format(args.val_save_pth, image_id))
+heatmap_path = heatmap_path[0]
 
-im = Image.open('/home/ozan/101323.svs_128_heatmap.png').convert('L')
+im = Image.open(heatmap_path).convert('L')
 x, y = im.size
 
 wsi = wsi.resize((x, y))

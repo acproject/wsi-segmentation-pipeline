@@ -1,13 +1,7 @@
 '''
-extract gt patches centered on patch
-not random sliding windows
-first generates gt mask
-then goes to each object center
-(connected component) and makes
-patches.
-if object too large, extract patches
-on uniformly sampled points on the object
-based on kmeans
+pick 50 images from sunnybrook
+10 indep cases and use them as
+"normal" data samples
 '''
 import cv2
 import openslide
@@ -23,8 +17,10 @@ from sklearn.cluster import KMeans
 import gc
 from utils.preprocessing import nextpow2, ispow2
 
+args.raw_train_pth = '/home/ozan/remoteDir/'
+
 ufs.make_folder('../' + args.train_image_pth, False)
-wsipaths = glob.glob('../{}/*.svs'.format(args.raw_train_pth))
+wsipaths = glob.glob('{}/Case*/*.svs'.format(args.raw_train_pth))
 
 ' check if metadata gt.npy already exists to append to it '
 metadata_pth = '../{}/gt.npy'.format(args.train_image_pth)
@@ -33,27 +29,70 @@ metadata = ufs.fetch_metadata(metadata_pth)
 pwhs = {
     np.maximum(args.tile_w, args.tile_h): 0
 }
+
+annotations_list = glob.glob('{}/**/sedeen-Sherine**/*.xml'.format(args.raw_train_pth))
+annotations_filename_list = [int(os.path.basename(p).replace('.session.xml', '')) for p in annotations_list]
+
+svs_list = glob.glob('{}/Case*/*.svs'.format(args.raw_val_pth))
+svs_filename_list = [(int(os.path.basename(p).replace('.svs', '')), p) for p in svs_list]
+svs_ids = [p[0] for p in svs_filename_list]
+
+benigns = [101332, 101333, 101358, 101359, 101361,
+101362, 101363, 101364,101366,101372,
+101376,101381,101382,101488,101492,101497,
+101498,101510,99189,99190,99191,99192,
+99204,99205,99206,99207,99916]
+
+no_tumor_bed = set(svs_ids).difference(set(annotations_filename_list))
+no_tumor_bed = no_tumor_bed.union(set(benigns))
+
+no_tumor_bed = list(no_tumor_bed)
+import random
+random.seed(0)
+random.shuffle(no_tumor_bed)
+no_tumor_bed_train_ids = [101399, 100239, 101345, 101354, 101355, 100230, 101383,
+101347, 101372, 101352, 101335, 100279, 101488, 100341,
+101510, 101394, 100232, 101350, 99204, 101386, 100285,
+101361, 100244, 99205, 100213, 100268, 100345, 100328,
+101366, 101402, 101324, 100240, 100260, 101346, 100346,
+99206, 101384, 100262, 101396, 101348, 101382, 100227,
+101340, 101341, 101342, 99192, 100329, 101400, 100276,
+101356]
+
+
 wsipaths = sorted(wsipaths)
 patch_id = 0
 
+gt_patch = np.zeros((args.tile_h, args.tile_w), dtype=np.uint8)
+# gt_patch = (255 * np.eye(args.num_classes)[gt_patch][..., 1:]).astype(np.uint8)
+gt_patch = Image.fromarray(gt_patch.astype(np.uint8))
 
-num_iters = 1  # each iter randomizes the centers of objects
+if args.scan_resize != 1:
+    gt_patch = gt_patch.resize((args.tile_w, args.tile_h))
 
-for _ in range(num_iters):
+for wsipath in tqdm(wsipaths):
 
-    for wsipath in tqdm(wsipaths):
+    filename = os.path.basename(wsipath)
+
+    svs_id = int(filename.replace('.svs', ''))
+
+    # if this is no tumor and the ones we picked for training.
+    if svs_id in no_tumor_bed_train_ids:
 
         'read scan and get metadata'
         scan = openslide.OpenSlide(wsipath)
-        filename = os.path.basename(wsipath)
+        if scan.level_count < 3:
+            continue
+
         metadata[filename] = {}
 
-        'get actual mask, i.e. the ground truth'
-        xmlpath = '../{}/{}.xml'.format(args.raw_train_pth, filename.split('.svs')[0])
+        wsi = scan.read_region((0, 0), args.scan_level, scan.level_dimensions[args.scan_level]).convert('RGB')
 
-        gt = getGT(xmlpath, scan, level=args.scan_level)
+        mskpth = '../{}/{}.png'.format(args.wsi_mask_pth, filename)
+        fg_mask = Image.open(mskpth).convert('L')
+        fg_mask = np.array(fg_mask)
 
-        n_labels, labels, stats, centers = cv2.connectedComponentsWithStats((gt > 0).astype(np.uint8))
+        n_labels, labels, stats, centers = cv2.connectedComponentsWithStats((fg_mask).astype(np.uint8))
         centers = centers.astype(np.int)
         '''
         stats
@@ -67,6 +106,9 @@ for _ in range(num_iters):
             area = stats[tile_id, 4]
             cx, cy = centers[tile_id, :]
 
+            if np.float(area) / (args.tile_w * args.tile_h) <= 0.01:
+                continue
+
             pwh = nextpow2(np.maximum(w, h))  # patch width/height
 
             if pwh <= args.scan_resize * np.maximum(args.tile_w, args.tile_h):
@@ -77,16 +119,16 @@ for _ in range(num_iters):
                 if pwh not in pwhs:
                     pwhs[pwh] = 0
 
-                up, down = np.maximum(cy-dy, 1), np.minimum(cy+dy, gt.shape[0])
-                left, right = np.maximum(cx-dx, 1), np.minimum(cx+dx, gt.shape[1])
+                up, down = np.maximum(cy-dy, 1), np.minimum(cy+dy, fg_mask.shape[0])
+                left, right = np.maximum(cx-dx, 1), np.minimum(cx+dx, fg_mask.shape[1])
 
                 if up == 1:
                     down = up + pwh
-                if down == gt.shape[0]:
+                if down == fg_mask.shape[0]:
                     up = down - pwh
                 if left == 1:
                     right = left + pwh
-                if right == gt.shape[1]:
+                if right == fg_mask.shape[1]:
                     left = right - pwh
 
                 'patch paths'
@@ -100,18 +142,10 @@ for _ in range(num_iters):
                 }
 
                 ' save images '
-                gt_patch = gt[up:down, left:right]
-                # gt_patch = (255 * np.eye(args.num_classes)[gt_patch][..., 1:]).astype(np.uint8)
-                gt_patch = Image.fromarray(gt_patch.astype(np.uint8))
-
-                if args.scan_resize != 1:
-                    gt_patch = gt_patch.resize((args.tile_w, args.tile_h))
-
                 gt_patch.save('../' + tilepth_g)
 
-                wsi_patch = scan.read_region((int(left * scan.level_downsamples[args.scan_level]), int(up * scan.level_downsamples[args.scan_level])),
-                                             args.scan_level,
-                                             (pwh, pwh)).convert('RGB')
+                wsi_patch = wsi.crop((left, up, right, down))
+
                 if args.scan_resize != 1:
                     wsi_patch = wsi_patch.resize((args.tile_w, args.tile_h))
 
@@ -122,7 +156,7 @@ for _ in range(num_iters):
 
             else:
 
-                us = 1 if gt.size/area <= 0.5 else 16   # undersample region
+                us = 1 if fg_mask.size/area <= 0.5 else 16   # undersample region
 
                 label_patch = labels[u:u+h, l:l+w] == tile_id
                 label_patch = Image.fromarray((255*label_patch).astype(np.uint8))
@@ -152,16 +186,16 @@ for _ in range(num_iters):
                     pwh = args.scan_resize * np.maximum(args.tile_w, args.tile_h)
                     dx = dy = pwh // 2
 
-                    up, down = np.maximum(_cy - dy, 1), np.minimum(_cy + dy, gt.shape[0])
-                    left, right = np.maximum(_cx - dx, 1), np.minimum(_cx + dx, gt.shape[1])
+                    up, down = np.maximum(_cy - dy, 1), np.minimum(_cy + dy, fg_mask.shape[0])
+                    left, right = np.maximum(_cx - dx, 1), np.minimum(_cx + dx, fg_mask.shape[1])
 
                     if up == 1:
                         down = up + pwh
-                    if down == gt.shape[0]:
+                    if down == fg_mask.shape[0]:
                         up = down - pwh
                     if left == 1:
                         right = left + pwh
-                    if right == gt.shape[1]:
+                    if right == fg_mask.shape[1]:
                         left = right - pwh
 
                     if up >= down or left >= right:
@@ -179,18 +213,10 @@ for _ in range(num_iters):
                     }
 
                     ' save images '
-                    gt_patch = gt[up:down, left:right]
-                    # gt_patch = (255 * np.eye(args.num_classes)[gt_patch][..., 1:]).astype(np.uint8)
-                    gt_patch = Image.fromarray(gt_patch.astype(np.uint8))
-
-                    if args.scan_resize != 1:
-                        gt_patch = gt_patch.resize((args.tile_w, args.tile_h))
-
                     gt_patch.save('../' + tilepth_g)
 
-                    wsi_patch = scan.read_region((left * (4 ** args.scan_level), up * (4 ** args.scan_level)),
-                                                 args.scan_level,
-                                                 (pwh, pwh)).convert('RGB')
+                    wsi_patch = wsi.crop((left, up, right, down))
+
                     if args.scan_resize != 1:
                         wsi_patch = wsi_patch.resize((args.tile_w, args.tile_h))
                     wsi_patch.save('../' + tilepth_w)
@@ -202,11 +228,10 @@ for _ in range(num_iters):
 
                     pwhs[pwh] += 1
 
-        del gt
+        del fg_mask
         del labels
         del scan
 
 
 np.save(metadata_pth, metadata)
 
-print(pwhs)

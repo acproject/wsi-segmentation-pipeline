@@ -87,7 +87,7 @@ class Dataset_wsis:
         self.params = preprocessing.DotDict(params)
         self.wsis = {}
 
-        wsipaths = glob.glob('{}/**/*.svs'.format(svs_pth))
+        wsipaths = glob.glob('{}/Case*/*.svs'.format(svs_pth))
         with tqdm(enumerate(sorted(wsipaths))) as t:
             for wj, wsipath in t:
                 t.set_description('Loading wsis.. {:d}/{:d}'.format(1 + wj, len(wsipaths)))

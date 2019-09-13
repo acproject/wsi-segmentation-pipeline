@@ -368,3 +368,13 @@ def quantize_image(image, n_colors=0):
     q = centers[labels].reshape(image.shape).astype('uint8')
 
     return Image.fromarray(q)
+
+
+def nextpow2(x):
+    x = int(x)
+    return 1 << (x-1).bit_length()
+
+
+def ispow2(x):
+    x = int(x)
+    return x > 0 and (x & (x - 1))
